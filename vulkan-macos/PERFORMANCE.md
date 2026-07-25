@@ -202,10 +202,7 @@ The honest statement is that ~40% of achievable bandwidth is unexplained at
 slightly smaller file, at some cost in perplexity. That is a real if modest
 win for anyone who will trade a little quality for speed.
 
-### 5.2 The limiter is the GGUF block layout, and it is worth 47%
-
-Section 5 concluded that 4-bit matvec is capped by something other than
-bandwidth or arithmetic, and left it unexplained. It is the memory layout.
+### 5.2 The GGUF block layout costs real throughput, but the size is unproven
 
 ggml's q4_0 shader reads weights two bytes at a time:
 
@@ -213,46 +210,55 @@ ggml's q4_0 shader reads weights two bytes at a time:
 
 On RDNA1 a 2-byte request occupies the same issue slot as a 16-byte one, so
 this spends roughly eight times the memory requests per useful byte. That
-single line explains every earlier observation: why four 4-bit formats with
-very different unpacking tied (identical request counts), why f16 was fastest
-(fewest requests per byte), and why the largest contiguous op in the profile
-was the best performing.
+mechanism is consistent with everything in section 5: four 4-bit formats with
+different unpacking tied because they issue identical request counts, f16 led
+because it needs fewest requests per byte, and the largest contiguous op in the
+profile was the fastest.
 
-ggml is not free to fix it. A q4_0 block is `float16_t d` followed by 16 bytes
-of nibbles -- **18 bytes**, which cannot be 4-byte aligned. That is why q4_0
-has no `packed32` variant while q4_1, at 20 bytes, does. The format forbids
-wide loads.
+ggml is not free to widen the load. A q4_0 block is `float16_t d` plus 16 bytes
+of nibbles -- 18 bytes, which cannot be 4-byte aligned. That is why q4_0 has no
+`packed32` variant while q4_1, at 20 bytes, does.
 
-We wrote a Metal matvec kernel to measure what is available. Two rows per
-simdgroup, four blocks unrolled with all eight weight loads issued before any
-is consumed, `simd_sum` reduction, no threadgroup barriers. Verified against a
-CPU reference (worst relative error 0.000954). Interleaved with the native
-layout across repeated runs so thermal drift affects both equally:
+We wrote a Metal matvec to measure the size of the effect: two rows per
+simdgroup, U blocks unrolled with all loads issued before any is consumed,
+`simd_sum` reduction, no barriers, verified against a CPU reference to 1e-3.
+Comparing the two layouts through the same kernel, over one token's worth of
+real Llama 3.2 3B shapes:
 
-| kernel | layout | GB/s | G weights/s | % of 163.8 |
-|---|---|---|---|---|
-| ggml Vulkan | native 18-byte | 85.4 | 152 | 52% |
-| ours | native 18-byte | 46.2 | 82 | 28% |
-| **ours** | **split** | **126.1** | **224** | **77%** |
+| shape | count | MB | native | split | speedup |
+|---|---|---|---|---|---|
+| attn qkv/o 3072x3072 | 56 | 297 | 18.55 ms | 6.95 ms | 2.67x |
+| ffn gate+up 8192x3072 | 56 | 793 | 20.56 ms | 16.86 ms | 1.22x |
+| ffn down 3072x8192 | 28 | 396 | 9.98 ms | 8.41 ms | 1.19x |
+| kv proj 1024x3072 | 56 | 99 | 3.58 ms | 3.05 ms | 1.17x |
+| output head 128256x3072 | 1 | 222 | 2.44 ms | 1.56 ms | 1.56x |
+| **total** | | **1807** | **55.11 ms** | **36.83 ms** | **1.50x** |
 
-Split layout means nibbles stored as contiguous 16-byte blocks with scales in a
-separate array -- identical bytes, identical arithmetic, naturally aligned.
+**The layout is worth about 1.5x, like for like.** That is the defensible claim.
 
-Two conclusions, and the second matters more than the first:
+Two things this does *not* establish, both of which an earlier revision of this
+report got wrong.
 
-**The gain is real: +47% over ggml, 52% to 77% of achievable bandwidth.** On
-the 3B model that would extrapolate to roughly 67 tok/s against today's 45.7.
+**It is not a 47% win over ggml.** That figure came from a single 8192x8192
+matrix where the kernel had been tuned, and it did not survive real shapes. The
+unrolled loop only runs when `nblk >= 32*(U-1)`; at K=3072, `nblk` is 96, so
+U=4 never enters the loop while still reserving its registers. The largest
+layer in the model has K=3072. Before the unroll depth was made adaptive, the
+same kernel came out at **0.62x** across a token -- slower than the thing it
+was being compared against. A sharp optimum on one shape was overfitting, and
+the cliff either side of U=4 should have been read as a warning rather than a
+sweet spot.
 
-**The gain comes entirely from the layout, not the kernel.** Our kernel on the
-native layout is *worse* than ggml's (46 vs 85) -- their handling of the
-awkward stride is better than ours. Load hoisting buys nothing until the bytes
-are arranged so that wide loads are possible. So this is not an upstreamable
-shader patch; it needs the weights repacked, either at model load or in the
-file format itself.
+**It does not show our kernel beating ggml.** The absolute predictions from
+this simulation are 17.4 tok/s for the native layout and 25.6 for split, while
+llama.cpp actually delivers 45.68 tok/s on this machine. Our native-layout
+kernel is therefore a poor stand-in for ggml's, which is roughly 2.6x better,
+and by extension our split kernel would most likely be *slower* than what ggml
+already ships. The 1.5x is our kernel against our kernel.
 
-Caveats: this is a standalone microbenchmark, not a shipped kernel. It handles
-one quant type and one shape, skips the edge cases in `mul_mat_vec.comp`, and
-the extrapolation to end-to-end tokens per second is unverified.
+Establishing whether the layout advantage survives against a well-tuned
+implementation requires porting the split layout into ggml's shader and
+measuring end to end, which this work has not done.
 
 ### 5.1 Efficiency and speed pull in opposite directions
 

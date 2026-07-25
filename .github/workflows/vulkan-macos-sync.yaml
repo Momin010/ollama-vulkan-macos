@@ -1,0 +1,273 @@
+# Track upstream Ollama releases automatically.
+#
+# The patch series in this fork is maintained as a rebase onto an upstream
+# release tag, never as a merge. That keeps history linear and each patch
+# independently re-appliable, and it means "update to the new upstream" is a
+# mechanical operation that either succeeds cleanly or stops with a conflict on
+# one identifiable patch.
+#
+# The pipeline is deliberately gated: a rebase that applies cleanly but does
+# not build must never reach users, so nothing is promoted to the release
+# branch until a real Intel Mac runner has built, tested and smoke-tested it.
+#
+#   sync    (ubuntu)       rebase onto the new tag, push to a staging branch
+#   verify  (macos intel)  build, unit test, package, smoke test
+#   promote (ubuntu)       fast-forward vulkan-darwin and tag -> release runs
+#
+# Any failure opens an issue, which is the notification.
+name: vulkan-macos-sync
+
+on:
+  schedule:
+    # Daily at 06:00 UTC.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: "Upstream tag to rebase onto (default: latest stable)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  RELEASE_BRANCH: vulkan-darwin
+  UPSTREAM: https://github.com/ollama/ollama.git
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_update: ${{ steps.check.outputs.needs_update }}
+      target_tag: ${{ steps.check.outputs.target_tag }}
+      base_tag: ${{ steps.check.outputs.base_tag }}
+      staging_branch: ${{ steps.rebase.outputs.staging_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vulkan-darwin
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "vulkan-macos-sync[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Find the newest upstream stable release
+        id: check
+        run: |
+          set -euo pipefail
+          git remote add upstream "$UPSTREAM" || git remote set-url upstream "$UPSTREAM"
+          git fetch --tags --quiet upstream
+
+          base_tag="$(cat vulkan-macos/UPSTREAM_BASE)"
+          echo "current base: $base_tag"
+
+          if [ -n "${{ inputs.target_tag }}" ]; then
+            target_tag="${{ inputs.target_tag }}"
+          else
+            # Stable releases only: skip rc, ci and other pre-release tags.
+            target_tag="$(git tag --list 'v*' --sort=-v:refname \
+              | grep -Ev 'rc|ci|alpha|beta|pre' \
+              | head -1)"
+          fi
+          echo "latest upstream: $target_tag"
+
+          if [ -z "$target_tag" ]; then
+            echo "::error::could not determine an upstream tag"
+            exit 1
+          fi
+
+          if [ "$target_tag" = "$base_tag" ]; then
+            echo "already up to date"
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "target_tag=$target_tag" >> "$GITHUB_OUTPUT"
+          echo "base_tag=$base_tag"     >> "$GITHUB_OUTPUT"
+
+      - name: Rebase the patch series
+        id: rebase
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          set -euo pipefail
+          base="${{ steps.check.outputs.base_tag }}"
+          target="${{ steps.check.outputs.target_tag }}"
+          staging="sync/${target}"
+          echo "staging_branch=$staging" >> "$GITHUB_OUTPUT"
+
+          echo "::group::patches being replayed"
+          git log --oneline "${base}..HEAD"
+          echo "::endgroup::"
+
+          git checkout -b "$staging"
+
+          if git rebase --onto "$target" "$base" "$staging"; then
+            echo "rebase clean"
+          else
+            # Capture which patch stopped and why, then leave the rebase
+            # aborted so the branch is not left in a broken state.
+            {
+              echo "CONFLICT_PATCH<<EOF"
+              git log --format='%s' -1 REBASE_HEAD 2>/dev/null || echo "unknown"
+              echo "EOF"
+              echo "CONFLICT_FILES<<EOF"
+              git diff --name-only --diff-filter=U
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+            git rebase --abort || true
+            echo "REBASE_FAILED=true" >> "$GITHUB_ENV"
+            exit 1
+          fi
+
+          echo "$target" > vulkan-macos/UPSTREAM_BASE
+          git add vulkan-macos/UPSTREAM_BASE
+          git commit -m "vulkan-macos: track upstream ${target}"
+
+          git push --force-with-lease origin "$staging"
+
+      - name: Open an issue on conflict
+        if: failure() && env.REBASE_FAILED == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          target="${{ steps.check.outputs.target_tag }}"
+          base="${{ steps.check.outputs.base_tag }}"
+
+          gh issue create \
+            --title "Rebase onto upstream ${target} has conflicts" \
+            --assignee "${{ github.repository_owner }}" \
+            --label "upstream-sync" \
+            --body "$(cat <<EOF
+          Automatic rebase from \`${base}\` to \`${target}\` could not be applied cleanly.
+
+          **Patch that stopped the rebase**
+          \`\`\`
+          ${CONFLICT_PATCH}
+          \`\`\`
+
+          **Conflicting files**
+          \`\`\`
+          ${CONFLICT_FILES}
+          \`\`\`
+
+          The rebase was aborted, so \`${{ env.RELEASE_BRANCH }}\` is untouched and the
+          current release remains installable.
+
+          To resolve locally:
+
+          \`\`\`sh
+          git fetch upstream --tags
+          git checkout ${{ env.RELEASE_BRANCH }}
+          git rebase --onto ${target} ${base}
+          # fix the conflict, then:
+          git rebase --continue
+          echo ${target} > vulkan-macos/UPSTREAM_BASE
+          git commit -am "vulkan-macos: track upstream ${target}"
+          git push --force-with-lease
+          \`\`\`
+
+          Then run the \`vulkan-macos-sync\` workflow again, or tag a release directly.
+          EOF
+          )"
+
+  verify:
+    needs: sync
+    if: needs.sync.outputs.needs_update == 'true'
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.staging_branch }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Vulkan toolchain
+        run: |
+          brew update --quiet
+          brew install --quiet cmake molten-vk vulkan-loader vulkan-headers glslang shaderc
+          echo "VULKAN_SDK=$(brew --prefix)" >> "$GITHUB_ENV"
+
+      - name: Vet and test
+        run: |
+          go vet ./discover/... ./llm/... ./ml/...
+          go test ./discover/... ./llm/... ./ml/...
+
+      - name: Build
+        run: |
+          cmake -B build -DOLLAMA_LLAMA_BACKENDS=vulkan
+          cmake --build build --parallel 4
+          go build .
+
+      - name: Package and smoke test
+        run: |
+          ./vulkan-macos/package.sh build dist/ollama-vulkan-macos
+          ./vulkan-macos/smoke-test.sh dist/ollama-vulkan-macos
+
+      - name: Open an issue if verification failed
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Upstream ${{ needs.sync.outputs.target_tag }} rebased cleanly but failed verification" \
+            --assignee "${{ github.repository_owner }}" \
+            --label "upstream-sync" \
+            --body "$(cat <<EOF
+          The patch series applied to \`${{ needs.sync.outputs.target_tag }}\` without
+          conflicts, but the build or tests failed on an Intel Mac runner.
+
+          This is the more interesting kind of breakage: the patches still *apply*, but
+          upstream changed behaviour underneath them. Worth reading the diff for the
+          files the patches touch.
+
+          Staging branch: \`${{ needs.sync.outputs.staging_branch }}\`
+          Run log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          \`${{ env.RELEASE_BRANCH }}\` was not updated, so the current release is unaffected.
+          EOF
+          )"
+
+  promote:
+    needs: [sync, verify]
+    if: needs.sync.outputs.needs_update == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fast-forward the release branch and tag
+        run: |
+          set -euo pipefail
+          git config user.name  "vulkan-macos-sync[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          staging="${{ needs.sync.outputs.staging_branch }}"
+          target="${{ needs.sync.outputs.target_tag }}"
+
+          git fetch origin "$staging"
+          git checkout "$RELEASE_BRANCH"
+          git reset --hard "origin/$staging"
+          git push --force-with-lease origin "$RELEASE_BRANCH"
+
+          # Release tags are the upstream version plus a fork revision, so a
+          # rebuild of the same upstream release can be published if needed.
+          rev=1
+          while git rev-parse -q --verify "refs/tags/${target}-vulkan.${rev}" >/dev/null; do
+            rev=$((rev + 1))
+          done
+          tag="${target}-vulkan.${rev}"
+
+          git tag -a "$tag" -m "Ollama ${target} with Vulkan/MoltenVK for Intel Macs"
+          git push origin "$tag"
+          echo "published $tag"
+
+      - name: Clean up the staging branch
+        run: git push origin --delete "${{ needs.sync.outputs.staging_branch }}" || true

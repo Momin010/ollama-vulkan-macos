@@ -1,0 +1,122 @@
+# Build, test and release the Vulkan-enabled macOS build.
+#
+# This file is specific to this fork. It is named distinctly from every
+# upstream workflow so that rebasing the patch series onto a new upstream
+# release never conflicts here.
+name: vulkan-macos
+
+on:
+  push:
+    branches: [vulkan-darwin]
+    tags: ["v*-vulkan.*"]
+  pull_request:
+    branches: [vulkan-darwin]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Intel runner is required: the whole point of this fork is x86_64 Macs
+    # with discrete AMD GPUs. macos-15-intel is a standard runner and is free
+    # on public repositories.
+    runs-on: macos-15-intel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Vulkan toolchain
+        run: |
+          brew update --quiet
+          brew install --quiet cmake molten-vk vulkan-loader vulkan-headers glslang shaderc
+          echo "VULKAN_SDK=$(brew --prefix)" >> "$GITHUB_ENV"
+
+      - name: Verify the runner is x86_64
+        run: |
+          arch="$(uname -m)"
+          echo "runner architecture: $arch"
+          [ "$arch" = "x86_64" ] || { echo "::error::expected an Intel runner, got $arch"; exit 1; }
+
+      - name: Go vet and unit tests
+        run: |
+          go vet ./discover/... ./llm/... ./ml/...
+          go test ./discover/... ./llm/... ./ml/...
+
+      - name: Check formatting of patched files
+        run: |
+          unformatted="$(gofmt -l discover llm ml)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Build Vulkan runner payload
+        run: |
+          cmake -B build -DOLLAMA_LLAMA_BACKENDS=vulkan
+          cmake --build build --parallel 4
+
+      - name: Build the ollama binary
+        run: go build .
+
+      - name: Assemble self-contained payload
+        run: ./vulkan-macos/package.sh build dist/ollama-vulkan-macos
+
+      - name: Smoke test the payload
+        run: ./vulkan-macos/smoke-test.sh dist/ollama-vulkan-macos
+
+      - name: Create archive
+        id: archive
+        run: |
+          version="${GITHUB_REF_NAME}"
+          case "$GITHUB_REF" in
+            refs/tags/*) ;;
+            *) version="dev-$(git rev-parse --short HEAD)" ;;
+          esac
+          name="ollama-vulkan-macos-${version}-x86_64.tar.gz"
+
+          mkdir -p release
+          tar -czf "release/$name" -C dist ollama-vulkan-macos
+          ( cd release && shasum -a 256 "$name" > checksums.txt )
+
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          ls -lh release/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ollama-vulkan-macos
+          path: release/
+          retention-days: 14
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/${{ steps.archive.outputs.name }}
+            release/checksums.txt
+          generate_release_notes: true
+          body: |
+            Ollama with Vulkan/MoltenVK GPU acceleration for **Intel Macs with AMD GPUs**.
+
+            ## Install
+
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/vulkan-darwin/vulkan-macos/install.sh | bash
+            ```
+
+            This patches an existing Ollama installation in place and keeps a
+            backup of the official binary. To revert:
+
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/vulkan-darwin/vulkan-macos/install.sh | bash -s -- --uninstall
+            ```
+
+            The archive is self-contained: MoltenVK and the Vulkan loader are
+            bundled, so no Homebrew or Vulkan SDK installation is needed.

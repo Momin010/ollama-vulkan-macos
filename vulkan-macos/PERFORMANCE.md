@@ -120,21 +120,29 @@ bus rate, not a capability. We measured the GPU directly with a Metal kernel
 that streams a 1 GiB private buffer and accumulates — pure coalesced sequential
 read, no dequantisation, a strict upper bound on any inference kernel:
 
-    BEST STREAMING READ: 141.4 GB/s   (74% of rated 192 GB/s)
+    simple grid-stride kernel:  141.4 GB/s   (74% of rated)
+    4x-unrolled kernel:         163.8 GB/s   (85% of rated)
+
+The first figure was our own under-optimised benchmark. Unrolling the load
+loop so more requests are in flight raises it by 16%, and 163.8 GB/s is the
+number used below. It is a lower bound: a better kernel may raise it again,
+which would lower every efficiency figure here proportionally.
 
 Recomputed against what the hardware can actually deliver:
 
-| configuration | bytes/weight | tok/s | GB/s | % of 192 | **% of 141.4** |
+| configuration | bytes/weight | tok/s | GB/s | % of 192 | **% of 163.8** |
 |---|---|---|---|---|---|
-| 3B Q4_K_M | 0.56 | 45.68 | 92.3 | 48% | **65%** |
-| 1B Q8_0 | 1.06 | 77.69 | 102.6 | 53% | **73%** |
-| 3B Q8_0 | 1.06 | 33.06 | 113.1 | 59% | **80%** |
-| 1B f16 | 2.00 | 47.55 | 117.9 | 61% | **83%** |
-| *streaming read* | — | — | *141.4* | *74%* | *100%* |
+| 3B Q4_K_M | 0.56 | 45.68 | 92.3 | 48% | **56%** |
+| 1B Q8_0 | 1.06 | 77.69 | 102.6 | 53% | **63%** |
+| 3B Q8_0 | 1.06 | 33.06 | 113.1 | 59% | **69%** |
+| 1B f16 | 2.00 | 47.55 | 117.9 | 61% | **72%** |
+| *streaming read* | — | — | *163.8* | *85%* | *100%* |
 
-Inference is not running at half the hardware's capability. It is running at
-65–83% of it. The apparent shortfall was mostly an artefact of dividing by a
-number no kernel on this GPU can reach.
+Inference runs at 56–72% of what the memory system can deliver, not the 48–61%
+the rated figure implies. An earlier revision of this report used 141.4 GB/s as
+the denominator and consequently claimed two configurations had reached 80%.
+That was wrong: the ceiling measurement itself was under-optimised. Correcting
+it moves every figure down, and nothing here reaches 80%.
 
 ## 5. Where the remaining gap is
 

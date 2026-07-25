@@ -202,63 +202,66 @@ The honest statement is that ~40% of achievable bandwidth is unexplained at
 slightly smaller file, at some cost in perplexity. That is a real if modest
 win for anyone who will trade a little quality for speed.
 
-### 5.2 The GGUF block layout costs real throughput, but the size is unproven
+### 5.2 The GGUF block layout is worth about 12%
 
 ggml's q4_0 shader reads weights two bytes at a time:
 
     const uint vui = uint(data_a_packed16[a_offset + ib].qs[iqs/2]);
 
 On RDNA1 a 2-byte request occupies the same issue slot as a 16-byte one, so
-this spends roughly eight times the memory requests per useful byte. That
-mechanism is consistent with everything in section 5: four 4-bit formats with
-different unpacking tied because they issue identical request counts, f16 led
-because it needs fewest requests per byte, and the largest contiguous op in the
-profile was the fastest.
+this spends roughly eight times the memory requests per useful byte. ggml is
+not free to widen it: a q4_0 block is a 2-byte scale plus 16 bytes of nibbles,
+and 18 bytes cannot be 4-byte aligned. That is why q4_0 has no `packed32`
+variant while q4_1, at 20 bytes, does.
 
-ggml is not free to widen the load. A q4_0 block is `float16_t d` plus 16 bytes
-of nibbles -- 18 bytes, which cannot be 4-byte aligned. That is why q4_0 has no
-`packed32` variant while q4_1, at 20 bytes, does.
+To size the effect we wrote a Metal matvec (2 rows per simdgroup, U blocks
+unrolled with all loads issued before any is consumed, `simd_sum` reduction, no
+barriers, verified against a CPU reference to 1e-3) and ran a full token's
+worth of real Llama 3.2 3B shapes through it in both layouts, encoding all 197
+matvecs into a single command buffer the way llama.cpp submits a graph:
 
-We wrote a Metal matvec to measure the size of the effect: two rows per
-simdgroup, U blocks unrolled with all loads issued before any is consumed,
-`simd_sum` reduction, no barriers, verified against a CPU reference to 1e-3.
-Comparing the two layouts through the same kernel, over one token's worth of
-real Llama 3.2 3B shapes:
+| layout | per token | implied tok/s |
+|---|---|---|
+| native 18-byte | 16.22 ms | 54.3 |
+| split | 14.51 ms | 59.8 |
+| | | **1.12x** |
 
-| shape | count | MB | native | split | speedup |
-|---|---|---|---|---|---|
-| attn qkv/o 3072x3072 | 56 | 297 | 18.55 ms | 6.95 ms | 2.67x |
-| ffn gate+up 8192x3072 | 56 | 793 | 20.56 ms | 16.86 ms | 1.22x |
-| ffn down 3072x8192 | 28 | 396 | 9.98 ms | 8.41 ms | 1.19x |
-| kv proj 1024x3072 | 56 | 99 | 3.58 ms | 3.05 ms | 1.17x |
-| output head 128256x3072 | 1 | 222 | 2.44 ms | 1.56 ms | 1.56x |
-| **total** | | **1807** | **55.11 ms** | **36.83 ms** | **1.50x** |
+**The layout is worth about 12%.** For reference llama.cpp itself measures
+45.68 tok/s on this machine with q4_K_M, so the native-layout kernel here is in
+the right region and this is a like-for-like comparison rather than one against
+a strawman.
 
-**The layout is worth about 1.5x, like for like.** That is the defensible claim.
+The number arrived at 12% only after three rounds of correction, and the
+sequence is the useful part:
 
-Two things this does *not* establish, both of which an earlier revision of this
-report got wrong.
+| method | claimed gain |
+|---|---|
+| one 8192x8192 matrix | 47% |
+| real shapes, one commit+wait per dispatch | 50% |
+| real shapes, batched into one command buffer | **12%** |
 
-**It is not a 47% win over ggml.** That figure came from a single 8192x8192
-matrix where the kernel had been tuned, and it did not survive real shapes. The
-unrolled loop only runs when `nblk >= 32*(U-1)`; at K=3072, `nblk` is 96, so
-U=4 never enters the loop while still reserving its registers. The largest
-layer in the model has K=3072. Before the unroll depth was made adaptive, the
-same kernel came out at **0.62x** across a token -- slower than the thing it
-was being compared against. A sharp optimum on one shape was overfitting, and
-the cliff either side of U=4 should have been read as a warning rather than a
-sweet spot.
+The first figure was overfitting: the unrolled loop only runs when
+`nblk >= 32*(U-1)`, and at K=3072 (the largest layer in the model) `nblk` is 96,
+so U=4 never entered the loop while still reserving its registers. Before the
+unroll depth was made adaptive the same kernel measured **0.62x** across a
+token, slower than what it was compared against.
 
-**It does not show our kernel beating ggml.** The absolute predictions from
-this simulation are 17.4 tok/s for the native layout and 25.6 for split, while
-llama.cpp actually delivers 45.68 tok/s on this machine. Our native-layout
-kernel is therefore a poor stand-in for ggml's, which is roughly 2.6x better,
-and by extension our split kernel would most likely be *slower* than what ggml
-already ships. The 1.5x is our kernel against our kernel.
+The second figure came from a harness that paid a CPU/GPU round trip per
+dispatch and multiplied by the op count. That round trip measures 0.112 ms,
+which across 197 matvecs is 22.1 ms of sync per token that real decoding never
+pays, and it distorted the ratio as well as the absolute numbers.
 
-Establishing whether the layout advantage survives against a well-tuned
-implementation requires porting the split layout into ggml's shader and
-measuring end to end, which this work has not done.
+**Every increase in methodological rigour reduced the effect.** That pattern is
+the signature of measurement artefacts rather than a real phenomenon being
+progressively refined, and it should temper confidence in the surviving 12% as
+much as in the figures already withdrawn.
+
+**Practical conclusion: not worth building.** Capturing 12% requires repacking
+weights at load time, a new shader path, plumbing a tensor variant through
+ggml's type system, and repeating all of it for q4_K since that is what real
+models use. That is days of invasive work against a fork whose maintainability
+rests on touching as little as possible, for a gain smaller than the 19% the
+n-gram cache change already delivers for free.
 
 ### 5.1 Efficiency and speed pull in opposite directions
 

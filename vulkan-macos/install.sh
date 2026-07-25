@@ -21,6 +21,22 @@ STOCK_BACKUP="$APP_RESOURCES/ollama.stock-backup"
 STOCK_LIB_BACKUP="$APP_RESOURCES/lib.stock-backup"
 MARKER="$APP_RESOURCES/.vulkan-macos-version"
 
+WORK_DIR=""
+
+# Registered at script scope, not inside install_build(), because an EXIT trap
+# fires after that function has returned -- a variable local to it would be out
+# of scope by then, and referencing it under set -u aborts the script on the way
+# out of an otherwise successful install.
+#
+# Always returns 0: the trap runs on every exit path, including ones where
+# WORK_DIR was never assigned, and a trap that ends on a false test can leak a
+# non-zero status out of a script that actually succeeded.
+cleanup() {
+    [ -n "${WORK_DIR:-}" ] && [ -d "$WORK_DIR" ] && rm -rf "$WORK_DIR"
+    return 0
+}
+trap cleanup EXIT
+
 SUPPORT_DIR="$HOME/Library/Application Support/ollama-vulkan-macos"
 CACHE_DIR="$SUPPORT_DIR/payload"
 WATCHDOG_LABEL="com.github.momin010.ollama-vulkan-macos.watchdog"
@@ -142,21 +158,23 @@ resolve_release() {
 install_build() {
     resolve_release
 
-    local tmp
-    tmp="$(mktemp -d)"
-    trap 'rm -rf "$tmp"' EXIT
+    # Deliberately not `local`: the EXIT trap runs after this function has
+    # returned, so a local would be out of scope by then -- which under set -u
+    # aborts the script on the way out, after a successful install, and leaks
+    # the ~200 MB download.
+    WORK_DIR="$(mktemp -d)"
 
     log "downloading $RELEASE_TAG"
-    curl -fsSL --progress-bar "$TARBALL_URL" -o "$tmp/payload.tar.gz" \
+    curl -fsSL --progress-bar "$TARBALL_URL" -o "$WORK_DIR/payload.tar.gz" \
         || die "download failed"
 
     # Verify the checksum when the release publishes one.
     local sums_url="${TARBALL_URL%/*}/checksums.txt"
-    if curl -fsSL "$sums_url" -o "$tmp/checksums.txt" 2>/dev/null; then
+    if curl -fsSL "$sums_url" -o "$WORK_DIR/checksums.txt" 2>/dev/null; then
         log "verifying checksum"
         local want got
-        want="$(grep "$(basename "$TARBALL_URL")" "$tmp/checksums.txt" | awk '{print $1}')"
-        got="$(shasum -a 256 "$tmp/payload.tar.gz" | awk '{print $1}')"
+        want="$(grep "$(basename "$TARBALL_URL")" "$WORK_DIR/checksums.txt" | awk '{print $1}')"
+        got="$(shasum -a 256 "$WORK_DIR/payload.tar.gz" | awk '{print $1}')"
         if [ -n "$want" ] && [ "$want" != "$got" ]; then
             die "checksum mismatch -- refusing to install.
   expected $want
@@ -168,11 +186,11 @@ install_build() {
     fi
 
     log "extracting"
-    mkdir -p "$tmp/payload"
-    tar -xzf "$tmp/payload.tar.gz" -C "$tmp/payload"
+    mkdir -p "$WORK_DIR/payload"
+    tar -xzf "$WORK_DIR/payload.tar.gz" -C "$WORK_DIR/payload"
 
     local src
-    src="$tmp/payload"
+    src="$WORK_DIR/payload"
     # Tolerate an extra top-level directory in the archive.
     if [ ! -f "$src/ollama" ] && [ "$(find "$src" -maxdepth 1 -type d | wc -l)" -eq 2 ]; then
         src="$(find "$src" -maxdepth 1 -mindepth 1 -type d)"

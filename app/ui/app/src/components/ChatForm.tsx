@@ -1,4 +1,5 @@
 import Logo from "@/components/Logo";
+import SpeedIndicator from "@/components/SpeedIndicator";
 import { ModelPicker } from "@/components/ModelPicker";
 import { WebSearchButton } from "@/components/WebSearchButton";
 import { ImageThumbnail } from "@/components/ImageThumbnail";
@@ -52,6 +53,10 @@ interface MessageInput {
 
 interface ChatFormProps {
   hasMessages: boolean;
+  /** tok/s of the last completed response */
+  speedCompleted?: number | null;
+  /** tok/s of a response still streaming */
+  speedLive?: number | null;
   onSubmit?: (
     message: string,
     options: {
@@ -83,6 +88,8 @@ interface ChatFormProps {
 
 function ChatForm({
   hasMessages,
+  speedCompleted,
+  speedLive,
   onSubmit,
   autoFocus = false,
   chatId = "new",
@@ -722,6 +729,7 @@ function ChatForm({
 
       {/* File upload error message */}
       {fileUploadError && <ErrorMessage error={fileUploadError} />}
+      <SpeedIndicator completed={speedCompleted ?? null} live={speedLive ?? null} />
       <div
         className={`relative mx-auto flex bg-neutral-100 w-full max-w-[768px] flex-col items-center rounded-3xl pb-2 pt-4 dark:bg-neutral-800 dark:border-neutral-700 min-h-[88px] transition-opacity duration-200 ${isDisabled ? "opacity-50" : "opacity-100"}`}
       >

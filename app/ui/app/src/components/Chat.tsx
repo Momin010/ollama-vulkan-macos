@@ -4,6 +4,7 @@ import { FileUpload } from "./FileUpload";
 import { DisplayUpgrade } from "./DisplayUpgrade";
 import { DisplayStale } from "./DisplayStale";
 import { DisplayLogin } from "./DisplayLogin";
+import { useGenerationSpeed } from "../hooks/useGenerationSpeed";
 import {
   useChat,
   useSendMessage,
@@ -124,6 +125,8 @@ export default function Chat({ chatId }: { chatId: string }) {
     prevChatIdRef.current = chatId;
   }, [chatId, messages.length]);
 
+  const generationSpeed = useGenerationSpeed();
+
   // Simplified submit handler - ChatForm handles all the attachment logic
   const handleChatFormSubmit = (
     message: string,
@@ -147,6 +150,7 @@ export default function Chat({ chatId }: { chatId: string }) {
       data: att.data.length === 0 ? new Uint8Array(0) : att.data,
     }));
 
+    generationSpeed.reset();
     sendMessageMutation.mutate({
       message,
       attachments: allAttachments,
@@ -155,6 +159,7 @@ export default function Chat({ chatId }: { chatId: string }) {
       fileTools: options.fileTools,
       think: options.think,
       onChatEvent: (event) => {
+        generationSpeed.observe(event);
         if (event.eventName === "chat_created" && event.chatId) {
           navigate({
             to: "/c/$chatId",
@@ -205,6 +210,8 @@ export default function Chat({ chatId }: { chatId: string }) {
         <div className="flex flex-col h-screen justify-center relative">
           <div className="px-6">
             <ChatForm
+              speedCompleted={generationSpeed.completed}
+              speedLive={generationSpeed.live}
               hasMessages={false}
               onSubmit={handleChatFormSubmit}
               chatId={chatId}
@@ -278,6 +285,8 @@ export default function Chat({ chatId }: { chatId: string }) {
               </div>
             )}
             <ChatForm
+              speedCompleted={generationSpeed.completed}
+              speedLive={generationSpeed.live}
               hasMessages={messages.length > 0}
               onSubmit={handleChatFormSubmit}
               chatId={chatId}

@@ -266,7 +266,13 @@ repair() {
     codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || warn "re-signing reported a problem"
     cp "$SUPPORT_DIR/version" "$MARKER" 2>/dev/null || true
 
-    ok "re-applied $(cat "$SUPPORT_DIR/version" 2>/dev/null || echo 'the Vulkan build')"
+    local restored
+    restored="$(cat "$SUPPORT_DIR/version" 2>/dev/null || echo 'the Vulkan build')"
+    ok "re-applied $restored"
+    # The cached build corresponds to whichever upstream release this fork was
+    # tracking when it was installed. If Ollama updated to something newer,
+    # restoring the cache keeps GPU support but pins the older Ollama version.
+    log "note: this restores Ollama $restored; re-run the installer to pick up a newer build"
     open "$APP" 2>/dev/null || true
 }
 

@@ -411,10 +411,49 @@ repair() {
     # only pristine copy of the official binary with a patched one -- silently
     # destroying the user's ability to uninstall. That risk is not worth a
     # version bump, so the backup is written exactly once, at install time.
+    # Stage first, swap last.
+    #
+    # An earlier version removed lib/ollama and then copied the replacement in.
+    # Running from a LaunchAgent that copy fails with "Operation not permitted"
+    # -- a background agent does not inherit the rights needed to write inside
+    # /Applications -- and the delete had already happened. The result was an
+    # empty lib/ollama, no Vulkan backend to load, and silent CPU inference: the
+    # exact failure this watchdog exists to prevent, caused by the watchdog.
+    #
+    # Nothing is now destroyed until a full copy has been written and verified
+    # alongside it.
+    local staged="$APP_RESOURCES/lib/.ollama-staging.$$"
+    rm -rf "$staged"
+    if ! mkdir -p "$APP_RESOURCES/lib" 2>/dev/null; then
+        warn "cannot write to $APP_RESOURCES/lib; leaving the installation untouched"
+        warn "re-run the installer from a terminal to repair it"
+        return 1
+    fi
+    if ! cp -R "$CACHE_DIR/lib/ollama" "$staged" 2>/dev/null; then
+        rm -rf "$staged"
+        warn "could not stage the runtime payload (permission denied?);"
+        warn "leaving the installation untouched -- re-run the installer from a terminal"
+        return 1
+    fi
+
+    # A staged payload missing its backend would be worse than doing nothing.
+    if [ ! -s "$staged/vulkan/libggml-vulkan.so" ]; then
+        rm -rf "$staged"
+        warn "staged payload is incomplete; leaving the installation untouched"
+        return 1
+    fi
+
+    local staged_bin="$APP_RESOURCES/.ollama-staging.$$"
+    if ! cp "$CACHE_DIR/ollama" "$staged_bin" 2>/dev/null; then
+        rm -rf "$staged" "$staged_bin"
+        warn "could not stage the ollama binary; leaving the installation untouched"
+        return 1
+    fi
+
+    # Both pieces are present and writable. Now swap.
     rm -rf "$APP_RESOURCES/lib/ollama"
-    mkdir -p "$APP_RESOURCES/lib"
-    cp -R "$CACHE_DIR/lib/ollama" "$APP_RESOURCES/lib/ollama"
-    cp "$CACHE_DIR/ollama" "$APP_RESOURCES/ollama"
+    mv "$staged" "$APP_RESOURCES/lib/ollama"
+    mv "$staged_bin" "$APP_RESOURCES/ollama"
     chmod +x "$APP_RESOURCES/ollama"
     xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
     codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || warn "re-signing reported a problem"
@@ -422,6 +461,11 @@ repair() {
     cp "$SUPPORT_DIR/version" "$MARKER" 2>/dev/null || true
 
     verify_binary_runs || warn "the re-applied binary does not run; run the installer again"
+
+    if [ ! -s "$APP_RESOURCES/lib/ollama/vulkan/libggml-vulkan.so" ]; then
+        warn "the Vulkan backend is missing after repair -- inference will fall back to CPU"
+        warn "re-run the installer from a terminal"
+    fi
 
     local restored
     restored="$(cat "$SUPPORT_DIR/version" 2>/dev/null || echo 'the Vulkan build')"

@@ -202,6 +202,58 @@ The honest statement is that ~40% of achievable bandwidth is unexplained at
 slightly smaller file, at some cost in perplexity. That is a real if modest
 win for anyone who will trade a little quality for speed.
 
+### 5.2 The limiter is the GGUF block layout, and it is worth 47%
+
+Section 5 concluded that 4-bit matvec is capped by something other than
+bandwidth or arithmetic, and left it unexplained. It is the memory layout.
+
+ggml's q4_0 shader reads weights two bytes at a time:
+
+    const uint vui = uint(data_a_packed16[a_offset + ib].qs[iqs/2]);
+
+On RDNA1 a 2-byte request occupies the same issue slot as a 16-byte one, so
+this spends roughly eight times the memory requests per useful byte. That
+single line explains every earlier observation: why four 4-bit formats with
+very different unpacking tied (identical request counts), why f16 was fastest
+(fewest requests per byte), and why the largest contiguous op in the profile
+was the best performing.
+
+ggml is not free to fix it. A q4_0 block is `float16_t d` followed by 16 bytes
+of nibbles -- **18 bytes**, which cannot be 4-byte aligned. That is why q4_0
+has no `packed32` variant while q4_1, at 20 bytes, does. The format forbids
+wide loads.
+
+We wrote a Metal matvec kernel to measure what is available. Two rows per
+simdgroup, four blocks unrolled with all eight weight loads issued before any
+is consumed, `simd_sum` reduction, no threadgroup barriers. Verified against a
+CPU reference (worst relative error 0.000954). Interleaved with the native
+layout across repeated runs so thermal drift affects both equally:
+
+| kernel | layout | GB/s | G weights/s | % of 163.8 |
+|---|---|---|---|---|
+| ggml Vulkan | native 18-byte | 85.4 | 152 | 52% |
+| ours | native 18-byte | 46.2 | 82 | 28% |
+| **ours** | **split** | **126.1** | **224** | **77%** |
+
+Split layout means nibbles stored as contiguous 16-byte blocks with scales in a
+separate array -- identical bytes, identical arithmetic, naturally aligned.
+
+Two conclusions, and the second matters more than the first:
+
+**The gain is real: +47% over ggml, 52% to 77% of achievable bandwidth.** On
+the 3B model that would extrapolate to roughly 67 tok/s against today's 45.7.
+
+**The gain comes entirely from the layout, not the kernel.** Our kernel on the
+native layout is *worse* than ggml's (46 vs 85) -- their handling of the
+awkward stride is better than ours. Load hoisting buys nothing until the bytes
+are arranged so that wide loads are possible. So this is not an upstreamable
+shader patch; it needs the weights repacked, either at model load or in the
+file format itself.
+
+Caveats: this is a standalone microbenchmark, not a shipped kernel. It handles
+one quant type and one shape, skips the edge cases in `mul_mat_vec.comp`, and
+the extrapolation to end-to-end tokens per second is unverified.
+
 ### 5.1 Efficiency and speed pull in opposite directions
 
 The table above contains an inversion worth stating plainly. The format with

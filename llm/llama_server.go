@@ -1695,6 +1695,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 					EvalCount:          lsResp.Timings.PredictN,
 					EvalDuration:       time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond)),
 				}
+				logGenerationSpeed(s.ModelPath(), finalResp.PromptEvalCount, finalResp.PromptEvalDuration, finalResp.EvalCount, finalResp.EvalDuration)
 				hasFinalResp = true
 			}
 		}
@@ -1993,6 +1994,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 				resp.PromptEvalDuration = time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond))
 				resp.EvalCount = lsResp.Timings.PredictN
 				resp.EvalDuration = time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond))
+				logGenerationSpeed(s.ModelPath(), resp.PromptEvalCount, resp.PromptEvalDuration, resp.EvalCount, resp.EvalDuration)
 				toolCalls, err := accumulatedToolCalls(toolCalls)
 				if err != nil {
 					return err

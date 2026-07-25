@@ -315,7 +315,19 @@ func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []st
 			}
 		}
 
-		nativeDevice, hasNativeDevice := nativeByIndex[library][deviceIndex]
+		// The stdout device list can include skipped pseudo-devices (e.g. the
+		// Accelerate BLAS entry on macOS), so the line ordinal drifts from the
+		// backend's own device ordinal. GGML_VK_VISIBLE_DEVICES filtering and
+		// ggml_vulkan uma metadata are keyed by the Vulkan ordinal embedded in
+		// the device name (VulkanN), so prefer that when present.
+		backendIndex := deviceIndex
+		if library == "Vulkan" {
+			if n, err := strconv.Atoi(strings.TrimPrefix(name, "Vulkan")); err == nil {
+				backendIndex = n
+			}
+		}
+
+		nativeDevice, hasNativeDevice := nativeByIndex[library][backendIndex]
 		totalBytes := totalMiB * 1024 * 1024
 		if hasNativeDevice && !nativeProbeMatchesLlamaServerDevice(library, description, totalBytes, nativeDevice) {
 			hasNativeDevice = false
@@ -323,7 +335,7 @@ func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []st
 		computeMajor, computeMinor := computeVersion(library, deviceIndex, gfxByIndex, ccByIndex)
 		dev := ml.DeviceInfo{
 			DeviceID: ml.DeviceID{
-				ID:      strconv.Itoa(deviceIndex),
+				ID:      strconv.Itoa(backendIndex),
 				Library: library,
 			},
 			Name:         name,
@@ -334,7 +346,7 @@ func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []st
 			ComputeMinor: computeMinor,
 			LibraryPath:  libDirs,
 			GFXTarget:    gfxByIndex[deviceIndex],
-			Integrated:   isIntegratedLlamaServerDevice(library, deviceIndex, integratedByIndex),
+			Integrated:   isIntegratedLlamaServerDevice(library, backendIndex, integratedByIndex),
 		}
 		if hasNativeDevice {
 			if nativeDevice.DeviceID != "" {

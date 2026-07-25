@@ -22,6 +22,7 @@ STOCK_LIB_BACKUP="$APP_RESOURCES/lib.stock-backup"
 MARKER="$APP_RESOURCES/.vulkan-macos-version"
 
 WORK_DIR=""
+LOCK_DIR=""
 
 # Registered at script scope, not inside install_build(), because an EXIT trap
 # fires after that function has returned -- a variable local to it would be out
@@ -33,6 +34,7 @@ WORK_DIR=""
 # non-zero status out of a script that actually succeeded.
 cleanup() {
     [ -n "${WORK_DIR:-}" ] && [ -d "$WORK_DIR" ] && rm -rf "$WORK_DIR"
+    [ -n "${LOCK_DIR:-}" ] && [ -d "$LOCK_DIR" ] && rmdir "$LOCK_DIR" 2>/dev/null
     return 0
 }
 trap cleanup EXIT
@@ -93,6 +95,63 @@ from https://ollama.com/download, then run this again."
     command -v codesign >/dev/null || die "codesign is required (install Xcode Command Line Tools: xcode-select --install)"
 }
 
+# ---------------------------------------------------------------------------
+# Mutual exclusion
+#
+# The watchdog and an interactive run must never operate on the app bundle at
+# the same time. Without this, installing while the agent happens to fire gives
+# the agent a half-written bundle to inspect, and it draws the wrong conclusion
+# from it.
+# ---------------------------------------------------------------------------
+acquire_lock() {
+    mkdir -p "$SUPPORT_DIR"
+    local candidate="$SUPPORT_DIR/.lock" i
+    for i in $(seq 1 60); do
+        if mkdir "$candidate" 2>/dev/null; then
+            LOCK_DIR="$candidate"
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Signing
+#
+# Once this app bundle has been ad-hoc signed, every Mach-O inside it must be
+# ad-hoc signed too. A binary carrying Apple's signature and the hardened
+# runtime flag is killed outright (SIGKILL, exit 137) when launched from inside
+# an ad-hoc bundle, because library validation rejects the mismatch.
+#
+# This matters most on the *uninstall* path, which puts Apple's original binary
+# back. `codesign --deep` does not help: it signs nested bundles and frameworks
+# but leaves loose Mach-O files in Resources/ alone, which is exactly where the
+# ollama binary lives. It has to be signed explicitly.
+# ---------------------------------------------------------------------------
+sign_installed_binary() {
+    # Copying through a download or a temporary directory attaches attributes
+    # that invalidate a signature, so clear them before signing rather than
+    # after.
+    xattr -c "$APP_RESOURCES/ollama" 2>/dev/null || true
+    codesign --force --sign - "$APP_RESOURCES/ollama" >/dev/null 2>&1 \
+        || warn "could not re-sign the ollama binary; it may be killed on launch"
+}
+
+verify_binary_runs() {
+    if ! "$APP_RESOURCES/ollama" --version >/dev/null 2>&1; then
+        local rc=$?
+        if [ "$rc" -eq 137 ]; then
+            warn "the installed binary is being killed by macOS (SIGKILL)."
+            warn "this is a code-signing mismatch inside the app bundle."
+        else
+            warn "the installed ollama binary exited $rc when run"
+        fi
+        return 1
+    fi
+    return 0
+}
+
 quit_ollama() {
     log "stopping Ollama"
     osascript -e 'quit app "Ollama"' 2>/dev/null || true
@@ -132,12 +191,30 @@ will restore the official build."
 
     log "re-signing $APP"
     codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || warn "re-signing reported a problem"
+    # Must come after the bundle: the restored binary carries Apple's signature
+    # and the hardened runtime, which macOS kills inside an ad-hoc bundle.
+    sign_installed_binary
+
+    if verify_binary_runs; then
+        ok "restored binary runs"
+    else
+        warn "the restored Ollama binary does not run on this machine."
+        warn "reinstalling Ollama from https://ollama.com/download will fix it."
+    fi
 
     remove_watchdog
     rm -rf "$SUPPORT_DIR"
 
     ok "restored the official Ollama build"
-    printf '\nRelaunch Ollama from Applications when you are ready.\n'
+    cat <<EOF
+
+Relaunch Ollama from Applications when you are ready.
+
+Note: this app bundle was ad-hoc re-signed when the Vulkan build was
+installed, and that cannot be undone from here. The official Ollama code is
+back, but if you want a fully notarized app, reinstall it from
+https://ollama.com/download.
+EOF
 }
 
 # ---------------------------------------------------------------------------
@@ -229,6 +306,11 @@ install_build() {
     log "re-signing $APP"
     codesign --force --deep --sign - "$APP" >/dev/null 2>&1 \
         || warn "re-signing reported a problem; the app may refuse to launch"
+    sign_installed_binary
+
+    verify_binary_runs || die "the installed binary will not run on this machine.
+Restoring the official build:
+  curl -fsSL $SCRIPT_URL | bash -s -- --uninstall"
 
     printf '%s\n' "$RELEASE_TAG" > "$MARKER"
 
@@ -253,9 +335,27 @@ install_build() {
 # ---------------------------------------------------------------------------
 needs_repair() {
     [ -f "$CACHE_DIR/ollama" ] || return 1
-    # Marker gone, or the installed binary no longer matches the cached one.
+    [ -f "$APP_RESOURCES/ollama" ] || return 0
     [ -f "$MARKER" ] || return 0
-    ! cmp -s "$CACHE_DIR/ollama" "$APP_RESOURCES/ollama"
+
+    # cmp's exit status has three meanings and they must not be conflated:
+    #   0  identical            -> nothing to do
+    #   1  differ               -> repair
+    #  >1  cmp itself failed    -> we do not know
+    #
+    # The third case is real: during an install the bundle is being rewritten
+    # underneath us and cmp has been observed dying on SIGKILL. Treating "could
+    # not tell" as "differs" makes the watchdog perform a destructive repair
+    # against a half-written bundle, so an unreliable answer must mean "do
+    # nothing".
+    local rc=0
+    cmp -s "$CACHE_DIR/ollama" "$APP_RESOURCES/ollama" || rc=$?
+    case "$rc" in
+        0) return 1 ;;
+        1) return 0 ;;
+        *) log "could not compare binaries (cmp exited $rc); leaving things alone"
+           return 1 ;;
+    esac
 }
 
 repair() {
@@ -269,12 +369,14 @@ repair() {
     log "Ollama was replaced (likely by an auto-update); re-applying the Vulkan build"
     quit_ollama
 
-    # Refresh the stock backup: the binary that just overwrote ours is a
-    # newer official build, and is the correct thing to restore on uninstall.
-    if [ -f "$APP_RESOURCES/ollama" ] && ! cmp -s "$CACHE_DIR/ollama" "$APP_RESOURCES/ollama"; then
-        cp -p "$APP_RESOURCES/ollama" "$STOCK_BACKUP"
-    fi
-
+    # The stock backup is deliberately NOT refreshed here.
+    #
+    # It is tempting to save the binary that just replaced ours, on the grounds
+    # that a newer official build is what a later uninstall should restore. But
+    # this code path runs unattended, and if it ever misfires it overwrites the
+    # only pristine copy of the official binary with a patched one -- silently
+    # destroying the user's ability to uninstall. That risk is not worth a
+    # version bump, so the backup is written exactly once, at install time.
     rm -rf "$APP_RESOURCES/lib/ollama"
     mkdir -p "$APP_RESOURCES/lib"
     cp -R "$CACHE_DIR/lib/ollama" "$APP_RESOURCES/lib/ollama"
@@ -282,7 +384,10 @@ repair() {
     chmod +x "$APP_RESOURCES/ollama"
     xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
     codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || warn "re-signing reported a problem"
+    sign_installed_binary
     cp "$SUPPORT_DIR/version" "$MARKER" 2>/dev/null || true
+
+    verify_binary_runs || warn "the re-applied binary does not run; run the installer again"
 
     local restored
     restored="$(cat "$SUPPORT_DIR/version" 2>/dev/null || echo 'the Vulkan build')"
@@ -398,6 +503,7 @@ main() {
     case "${1:-}" in
         --uninstall)
             preflight
+            acquire_lock || die "another install or repair is in progress"
             uninstall
             return
             ;;
@@ -405,6 +511,13 @@ main() {
             # Runs unattended from the watchdog: no prompts, no preflight
             # that could block on a terminal that is not there.
             printf '\n[%s] repair check\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+            # If an interactive install is running, that operation owns the
+            # bundle. Exiting quietly is correct: the installer leaves things
+            # in the state this would have tried to produce anyway.
+            if ! acquire_lock; then
+                log "another install or repair is in progress; skipping"
+                return 0
+            fi
             repair
             return
             ;;
@@ -426,6 +539,7 @@ main() {
 
     printf '\n%sOllama + Vulkan for Intel Macs with AMD GPUs%s\n\n' "$bold" "$off"
     preflight
+    acquire_lock || die "another install or repair is in progress"
     install_build
     if [ "$want_watchdog" -eq 1 ]; then
         install_watchdog || warn "continuing without the watchdog"

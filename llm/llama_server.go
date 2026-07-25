@@ -377,6 +377,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	params = appendMMProjArgs(params, launch)
 	params = appendMTPDraftArgs(params, launch.config, launch.opts)
+	params = appendVulkanNgramSpecArgs(params, launch.gpus)
 
 	params = append(params, qwenVLServerArgs(launch.modelArch)...)
 

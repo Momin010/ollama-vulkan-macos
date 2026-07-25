@@ -110,19 +110,50 @@ env -u DYLD_FALLBACK_LIBRARY_PATH \
     GGML_BACKEND_PATH="$VULKAN_DIR/libggml-vulkan.so" \
     DYLD_LIBRARY_PATH="$STAGE_DIR/lib/ollama" \
     "$LLAMA_SERVER" --list-devices --offline > "$load_log" 2>&1
+exit_code=$?
 set -e
 
+# A dyld failure means the payload is not self-contained. This is the failure
+# that only shows up on machines other than the one that built it.
 if grep -qiE "dlopen|image not found|failed to load|Library not loaded" "$load_log"; then
-    printf '%s\n' "$(cat "$load_log")" >&2
+    cat "$load_log" >&2
     die "the Vulkan backend failed to load"
 fi
-ok "Vulkan backend loaded without linker errors"
+ok "no linker errors resolving the bundled libraries"
 
-if grep -qi "Vulkan[0-9]" "$load_log"; then
-    ok "enumerated a Vulkan device: $(grep -i 'Vulkan[0-9]' "$load_log" | head -1 | sed 's/^ *//')"
+device_line="$(grep -i "Vulkan[0-9]" "$load_log" | head -1 | sed 's/^ *//' || true)"
+
+if [ -n "$device_line" ]; then
+    ok "enumerated a Vulkan device: $device_line"
+elif [ "${REQUIRE_VULKAN_DEVICE:-0}" = "1" ]; then
+    cat "$load_log" >&2
+    die "no Vulkan device enumerated, but REQUIRE_VULKAN_DEVICE=1 was set"
 else
-    # Expected on CI: the runner is a VM with no discrete GPU.
-    warn "no Vulkan device enumerated (expected on a CI runner with no AMD GPU)"
+    warn "no Vulkan device enumerated -- expected on a runner with no AMD GPU,"
+    warn "but it means this run did NOT prove the GPU path works end to end."
+fi
+
+# Report abnormal termination explicitly. MoltenVK aborts when it cannot find a
+# Metal device, so on a GPU-less CI runner a crash here is expected and not a
+# reason to fail the build -- but it must never be reported as a clean run,
+# because the same abort on real hardware would be a genuine defect.
+if [ "$exit_code" -ne 0 ]; then
+    if [ "$exit_code" -gt 128 ]; then
+        warn "llama-server terminated by signal $((exit_code - 128)) (exit $exit_code)"
+    else
+        warn "llama-server exited $exit_code"
+    fi
+
+    if [ -n "$device_line" ]; then
+        # It found the GPU and still died: that is a real problem.
+        cat "$load_log" >&2
+        die "llama-server crashed after enumerating a Vulkan device"
+    fi
+    warn "treating this as acceptable because no GPU was present to drive"
 fi
 
 printf '\n%sPayload passed all checks.%s\n' "$green" "$off"
+if [ -z "$device_line" ]; then
+    printf '%sNote: run on hardware with an AMD GPU, with REQUIRE_VULKAN_DEVICE=1,%s\n' "$yellow" "$off"
+    printf '%sto verify the GPU path rather than just the packaging.%s\n' "$yellow" "$off"
+fi

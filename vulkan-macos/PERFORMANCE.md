@@ -19,9 +19,12 @@ obvious alternative to a translation layer, is 20x *slower*.
 The central result is that the rated bandwidth is not a meaningful denominator.
 A minimal streaming-read kernel measures the GPU's actual ceiling at
 **141.4 GB/s, 74% of its rated figure**. Against that ceiling, inference
-already achieves 65% (Q4_K_M) to 83% (f16). The remaining shortfall at 4-bit is
-dequantisation ALU cost, not memory physics, and is worth approximately 28%
-of generation throughput to whoever removes it.
+already achieves 65% (Q4_K_M) to 83% (f16). We then test the obvious explanation for the
+shortfall at 4-bit -- dequantisation cost -- by quantising one model into four
+4-bit formats with very different unpacking schemes, and **refute it**: all
+four land within 55-61% regardless. At 4-bit the kernel saturates neither
+bandwidth (60%) nor arithmetic (~8% of fp32 peak), which points to latency or
+occupancy in the matrix-vector reduction instead.
 
 One positive result: n-gram cache speculative decoding improves throughput by
 19% on inputs whose output repeats their context, at no bandwidth cost.
@@ -133,22 +136,75 @@ Inference is not running at half the hardware's capability. It is running at
 65–83% of it. The apparent shortfall was mostly an artefact of dividing by a
 number no kernel on this GPU can reach.
 
-## 5. Where the remaining gap is, and what it is worth
+## 5. Where the remaining gap is
 
 The efficiency ordering is monotonic in bytes per weight. f16 — raw read, no
-unpacking, no scales, no branches — reaches 83%. Q4_K_M, whose kernel must
-unpack sub-byte values and apply per-block scales, reaches 65%. **The 18-point
-gap is dequantisation ALU cost.** It is compute, not memory.
+unpacking — reaches 83%; Q4_K_M reaches 65%. The obvious reading is that the
+gap is dequantisation ALU cost, and an earlier draft of this report claimed
+exactly that, along with a 28% prize for removing it.
 
-That gap is addressable in software, and its size is measurable:
+**That claim was wrong, and the experiment that killed it is below.**
 
-    a 4-bit format at f16 efficiency:
-    117.9 GB/s / 2.02 GB = 58.4 tok/s   (+28% over today's 45.68)
+If unpacking cost were the limiter, 4-bit formats with very different unpacking
+schemes should differ in throughput. We quantised one Llama 3.2 1B f16 file
+into four 4-bit formats — identical weights, identical shapes, only the packing
+scheme varies — and measured each on a fresh verified server:
 
-This is the concrete research target this work identifies: not more bandwidth,
-which the silicon will not give, but a 4-bit dequantisation path whose ALU cost
-does not throttle the memory pipeline. On this hardware that is worth about
-28% of generation throughput, and nothing about it is specific to macOS.
+| format | unpacking work | GB/s | % of 141.4 | G weights/s | tok/s |
+|---|---|---|---|---|---|
+| Q4_0 | `d × (x − 8)` | 85.4 | 60% | 152 | 110.73 |
+| Q4_K_M | super-block, 6-bit scales *and* mins | 86.1 | 61% | 153 | 106.61 |
+| Q4_1 | scale + min per block | 84.0 | 59% | 149 | 101.01 |
+| IQ4_NL | non-linear lookup table | 77.9 | 55% | 138 | 100.17 |
+| *Q8_0* | *`d × x`* | *102.6* | *73%* | *97* | *77.69* |
+| *f16* | *none* | *117.9* | *83%* | *59* | *47.55* |
+
+Q4_0 does perhaps a third of Q4_K_M's unpacking work and is the *smaller*
+file. It is one point **slower** in bandwidth efficiency. All four 4-bit
+formats land within 55–61% despite radically different packing. Unpacking cost
+is visible only at the extreme — IQ4_NL's lookup table costs about six points —
+and it is nowhere near the 22 points that separate 4-bit from f16.
+
+**What the data actually shows** is two different limits:
+
+- At 4-bit the kernel saturates at ~150 G weights/s regardless of format.
+- At f16 it saturates at ~118 GB/s, which is 83% of the streaming ceiling.
+
+So f16 is bandwidth-bound and 4-bit is bound by per-weight processing rate. The
+crossover sits near 8 bits. Critically, 4-bit saturates **neither** limit:
+60% of achievable bandwidth and roughly 304 GFLOP/s, about 8% of this GPU's
+fp32 peak. Neither the memory system nor the arithmetic units are busy.
+
+That signature — both resources idle, throughput capped anyway — points to
+latency or occupancy in the matrix-vector reduction rather than to any
+arithmetic the kernel performs. Each weight is read exactly once and never
+reused, so there is no cache reuse to exploit and the kernel must keep enough
+loads in flight to cover memory latency. Failing to do so caps throughput
+without saturating anything.
+
+**Revised research target.** Not a cheaper quantisation format — that is now
+measured and does not help. The opportunity, if there is one, is a
+matrix-vector kernel with better latency hiding at low bit-widths on RDNA1
+through MoltenVK. That is kernel engineering rather than format design, it is
+considerably harder, and this report does not establish how much is available.
+The honest statement is that ~40% of achievable bandwidth is unexplained at
+4-bit, and neither of the two obvious explanations accounts for it.
+
+**Practical note.** Q4_0 is 4% faster than Q4_K_M at the same bit width and a
+slightly smaller file, at some cost in perplexity. That is a real if modest
+win for anyone who will trade a little quality for speed.
+
+### 5.1 Efficiency and speed pull in opposite directions
+
+The table above contains an inversion worth stating plainly. The format with
+the *best* bandwidth efficiency, f16 at 83%, is the *slowest* at 47.55 tok/s.
+The format with the worst efficiency, Q4_0 at 60%, is the fastest at
+110.73 tok/s.
+
+Higher bit widths use the memory system better but have more bytes to move.
+"Maximise bandwidth efficiency" and "maximise tokens per second" are therefore
+different objectives with different answers, and on this hardware they are
+close to opposed. Anyone optimising here should decide which one they mean.
 
 ## 6. Positive result: n-gram cache drafting
 
@@ -196,8 +252,11 @@ evidence.
   **45.7 vs 13.1 tok/s**, 3.5x over CPU.
 - The rated 192 GB/s is unreachable; the real ceiling is **141.4 GB/s**.
 - Against that ceiling inference already achieves **65–83%**.
-- The residual at 4-bit is **dequantisation ALU cost**, worth ~28%, and is the
-  one clearly identified software opportunity.
+- The residual at 4-bit is **not** dequantisation cost: four 4-bit formats with
+  very different unpacking all land at 55-61%. It saturates neither bandwidth
+  nor arithmetic, and remains unexplained.
+- **Efficiency and speed are opposed here**: f16 is most efficient (83%) and
+  slowest (47.6 tok/s); Q4_0 is least efficient (60%) and fastest (110.7).
 - Native Metal on AMD Macs is **20x worse** than Vulkan through MoltenVK.
 - Draft-model speculative decoding cannot pay for itself in this model family;
   **n-gram cache drafting gains 19%** on repetitive workloads.

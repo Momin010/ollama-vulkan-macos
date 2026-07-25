@@ -152,16 +152,48 @@ verify_binary_runs() {
     return 0
 }
 
+# Stop the desktop app *and* its server, and do not return until both are
+# actually gone.
+#
+# The app supervises the server process and restarts it when it dies. Killing
+# only the server, or asking the app to quit and assuming it did, leaves a
+# supervisor running that respawns a server from whatever is on disk at that
+# instant -- in the middle of replacing the binary. The result is a stale
+# server running the previous build while the new one sits installed and
+# unused, which looks exactly like "the install did nothing".
 quit_ollama() {
     log "stopping Ollama"
+
+    # Ask nicely first so the app can shut its server down cleanly.
     osascript -e 'quit app "Ollama"' 2>/dev/null || true
-    pkill -f "ollama serve" 2>/dev/null || true
-    # Give the app time to release the binary before it is replaced.
+
     local i
     for i in $(seq 1 20); do
-        pgrep -f "Ollama.app" >/dev/null 2>&1 || break
+        pgrep -f "Ollama.app/Contents/MacOS/Ollama" >/dev/null 2>&1 || break
         sleep 0.5
     done
+
+    # Kill the supervisor before the server, otherwise it restarts it.
+    if pgrep -f "Ollama.app/Contents/MacOS/Ollama" >/dev/null 2>&1; then
+        pkill -f "Ollama.app/Contents/MacOS/Ollama" 2>/dev/null || true
+        sleep 2
+    fi
+    pkill -f "ollama serve" 2>/dev/null || true
+    sleep 1
+
+    # Escalate to SIGKILL for anything still holding on.
+    for i in $(seq 1 10); do
+        pgrep -f "Ollama.app/Contents/MacOS/Ollama|ollama serve" >/dev/null 2>&1 || return 0
+        pkill -9 -f "Ollama.app/Contents/MacOS/Ollama" 2>/dev/null || true
+        pkill -9 -f "ollama serve" 2>/dev/null || true
+        sleep 1
+    done
+
+    if pgrep -f "Ollama.app/Contents/MacOS/Ollama|ollama serve" >/dev/null 2>&1; then
+        warn "Ollama is still running; quit it manually and run this again"
+        return 1
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -173,7 +205,7 @@ uninstall() {
 If Ollama is misbehaving, reinstalling it from https://ollama.com/download
 will restore the official build."
 
-    quit_ollama
+    quit_ollama || die "could not stop Ollama; nothing has been changed"
 
     log "restoring the original Ollama binary"
     cp "$STOCK_BACKUP" "$APP_RESOURCES/ollama"
@@ -275,7 +307,9 @@ install_build() {
     [ -f "$src/ollama" ] || die "archive did not contain an ollama binary"
     [ -d "$src/lib/ollama" ] || die "archive did not contain a lib/ollama payload"
 
-    quit_ollama
+    # Installing underneath a running supervisor is how a stale server ends up
+    # serving the old build from a new binary, so this is fatal, not a warning.
+    quit_ollama || die "could not stop Ollama; nothing has been changed"
 
     # Back up the stock binary, but only the first time. Running the installer
     # twice must not overwrite the pristine backup with an already-patched
@@ -457,29 +491,43 @@ remove_watchdog() {
 }
 
 verify_gpu() {
+    local logf="$HOME/.ollama/logs/server.log"
+
+    # Only read what the server we are about to start writes. The log persists
+    # across runs, so matching anywhere in the file can report a Vulkan device
+    # discovered by a previous install -- or, as happened during testing, miss
+    # that the line at the end came from a stale server.
+    local from=0
+    [ -f "$logf" ] && from="$(wc -l < "$logf" | tr -d ' ')"
+
     log "starting Ollama and checking GPU discovery"
     open "$APP" 2>/dev/null || { warn "could not launch Ollama automatically"; return 0; }
 
-    local i
-    for i in $(seq 1 30); do
-        curl -fsS -m 2 localhost:11434/api/version >/dev/null 2>&1 && break
+    local i line=""
+    for i in $(seq 1 45); do
         sleep 1
+        curl -fsS -m 2 localhost:11434/api/version >/dev/null 2>&1 || continue
+        [ -f "$logf" ] || continue
+        line="$(tail -n "+$((from + 1))" "$logf" 2>/dev/null | grep 'inference compute' | tail -1)"
+        [ -n "$line" ] && break
     done
 
-    local logf="$HOME/.ollama/logs/server.log"
-    if [ ! -f "$logf" ]; then
-        warn "no server log yet; open Ollama and try a prompt to confirm"
+    if [ -z "$line" ]; then
+        warn "Ollama did not report a compute device within 45s."
+        warn "check: grep 'inference compute' $logf"
         return 0
     fi
 
-    local line
-    line="$(grep 'inference compute' "$logf" 2>/dev/null | tail -1)"
     if printf '%s' "$line" | grep -q 'library=Vulkan'; then
         ok "GPU in use: $(printf '%s' "$line" | sed -n 's/.*description="\([^"]*\)".*/\1/p')"
-    else
-        warn "Ollama started but the log does not show a Vulkan device."
-        warn "check: grep 'inference compute' $logf"
+        return 0
     fi
+
+    warn "Ollama started but is NOT using the GPU."
+    warn "it reported: $(printf '%s' "$line" | grep -oE 'library=[a-zA-Z]+')"
+    warn "quit Ollama completely from the menu bar and reopen it, then check:"
+    warn "  grep 'inference compute' $logf"
+    return 0
 }
 
 usage() {

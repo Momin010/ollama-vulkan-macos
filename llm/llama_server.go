@@ -604,6 +604,17 @@ func appendBatchArgs(params []string, opts api.Options, embedding bool, numParal
 
 // LlamaServerFlashAttention resolves the flash-attention mode passed to llama-server.
 func LlamaServerFlashAttention(gpus []ml.DeviceInfo) ml.FlashAttentionType {
+	// Flash attention is broken on macOS Vulkan (MoltenVK): llama.cpp assigns
+	// the FA tensor to the CPU, forcing a per-token GPU->CPU round trip that
+	// collapses throughput. Force it off, even if requested via env.
+	if runtime.GOOS == "darwin" {
+		for _, gpu := range gpus {
+			if gpu.Library == "Vulkan" {
+				return ml.FlashAttentionDisabled
+			}
+		}
+	}
+
 	enabled := envconfig.FlashAttention(false)
 	userSet := enabled == envconfig.FlashAttention(true)
 	if userSet {

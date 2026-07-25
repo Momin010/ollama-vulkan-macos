@@ -384,6 +384,14 @@ func filterIntegratedGPUs(devices []ml.DeviceInfo) []ml.DeviceInfo {
 		return devices
 	}
 
+	if runtime.GOOS == "darwin" {
+		for i := range devices {
+			if devices[i].Library == "Vulkan" && !devices[i].Integrated {
+				devices[i].Integrated = darwinVulkanDeviceIsIntegrated(devices[i])
+			}
+		}
+	}
+
 	allow, explicit := integratedGPUAdmission()
 	filtered := devices[:0]
 	for _, device := range devices {

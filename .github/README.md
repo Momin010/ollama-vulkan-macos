@@ -140,10 +140,29 @@ enumerate your GPU, rather than just checking that the payload is well formed.
 
 ## Credit and licence
 
-All of the hard work here is [Ollama's](https://github.com/ollama/ollama) and
-[llama.cpp's](https://github.com/ggml-org/llama.cpp); this fork is four small
-patches and some packaging. MIT licensed, same as upstream.
+The Vulkan/MoltenVK support that makes Ollama run on AMD GPUs under macOS —
+the patches, the packaging and the installer — is by
+**[Momin Aldahdouh](https://github.com/Momin010)**.
 
-This is an unofficial community build. Please do not report issues with it to
-the Ollama project — open them
+Everything underneath it is the work of the
+[Ollama project](https://github.com/ollama/ollama) and
+[llama.cpp / ggml](https://github.com/ggml-org/llama.cpp), and that is the
+larger part by far.
+
+MIT licensed, same as upstream. **You may use, modify, sell and redistribute
+this, including inside a commercial or closed-source product.** The one
+condition is attribution: if you distribute this software or a substantial
+part of it, in source or binary form, you must carry the copyright notices
+from [`LICENSE`](../LICENSE) and [`NOTICE`](../NOTICE) — crediting both the
+Ollama project and Momin Aldahdouh.
+
+Running it yourself carries no obligation. The requirement is on
+redistribution: forks, rebranded builds, and products built on this work.
+
+If this is useful to you, a star or a link back is appreciated but not
+required.
+
+This is an unofficial community build, not affiliated with or endorsed by the
+Ollama project. "Ollama" is their trademark; the licence covers the code, not
+the name. Please do not report issues with this build to them — open them
 [here](https://github.com/Momin010/ollama-vulkan-macos/issues) instead.

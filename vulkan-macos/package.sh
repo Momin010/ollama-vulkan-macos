@@ -78,6 +78,14 @@ cp -R "$BUILD_DIR/lib/ollama/." "$STAGE_DIR/lib/ollama/"
 cp "./ollama" "$STAGE_DIR/ollama"
 chmod +x "$STAGE_DIR/ollama"
 
+# The MIT licence requires the copyright notices to travel with binary
+# distributions, not just with source. This archive is how almost everyone
+# receives the software, so the notices ship inside it.
+for legal in LICENSE NOTICE; do
+    [ -f "$legal" ] || die "$legal is missing from the repository root"
+    cp "$legal" "$STAGE_DIR/$legal"
+done
+
 VULKAN_DIR="$STAGE_DIR/lib/ollama/vulkan"
 [ -d "$VULKAN_DIR" ] || die "staged payload has no vulkan/ directory"
 

@@ -41,6 +41,17 @@ do
 done
 ok "all expected files present"
 
+# Shipping a binary archive without the copyright notices would breach the
+# MIT licence this project depends on, so it fails the build rather than
+# merely warning.
+log "checking licence notices are bundled"
+for legal in LICENSE NOTICE; do
+    [ -s "$STAGE_DIR/$legal" ] || die "$legal missing from the payload"
+done
+grep -q "Ollama" "$STAGE_DIR/LICENSE" || die "LICENSE does not credit Ollama"
+grep -q "Momin Aldahdouh" "$STAGE_DIR/NOTICE" || die "NOTICE does not carry the author attribution"
+ok "LICENSE and NOTICE bundled"
+
 # --- architecture ------------------------------------------------------------
 log "checking architecture"
 for f in "$STAGE_DIR/ollama" "$VULKAN_DIR/libggml-vulkan.so" "$VULKAN_DIR/libMoltenVK.dylib"; do

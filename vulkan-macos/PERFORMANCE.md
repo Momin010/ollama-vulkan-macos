@@ -85,16 +85,35 @@ tuning it would have restored was already in force.
 The misclassification is real and worth fixing upstream for correctness; it is
 not a performance defect on this path.
 
-### 3.3 Native Metal (20x worse)
+### 3.3 Native Metal cannot run this workload on Navi 14
 
-Bypassing the translation layer is the obvious hypothesis. We built pristine
-llama.cpp with `GGML_METAL=ON` for x86_64. It ran correctly — device selected,
-29/29 layers offloaded, `simdgroup reduction = true` — at **2.34 tok/s**.
+Bypassing the translation layer is the obvious hypothesis, and others report it
+working: llama.cpp discussion #19187 measures Metal at 195 t/s prompt
+processing against Vulkan's 102 on Intel Macs, on Radeon RX 6800 XT and PRO
+W6800X Duo.
 
-ggml's Metal kernels assume unified memory and `simdgroup_matrix` operations
-(`MTLGPUFamilyApple7`), neither of which a discrete AMD GPU provides. Vulkan
-through MoltenVK is not a handicap on this hardware; it is dramatically the
-better path, and the translation layer is not where the bandwidth goes.
+It does not reproduce here. Pristine llama.cpp built with `GGML_METAL=ON` for
+x86_64 selects the right device and offloads all 29 layers, then manages
+**2.37 tok/s** against Vulkan's 45.7, and **fails prompt processing outright**:
+
+    ggml_metal_device_init: simdgroup matrix mul. = false
+    test_prompt: failed to decode prompt batch, res = -3
+
+The first attempt at this used `GGML_METAL_EMBED_LIBRARY=OFF`, compiling
+shaders at runtime, which was a plausible explanation for the poor result. It
+was not the cause: rebuilding with the Metal toolchain installed and an
+embedded, offline-compiled metallib gives 2.37 tok/s against the runtime
+build's 2.34. The build was wrong and the conclusion was still right.
+
+The blocker is a capability gap. Prompt processing is matrix-matrix work,
+`simdgroup_matrix` requires `MTLGPUFamilyApple7`, and this GPU reports
+`MTLGPUFamilyMetal3` and `MTLGPUFamilyCommon3`. ggml-metal has no fallback for
+that combination, so the batch decode fails rather than running slowly. The
+RDNA2 cards in the referenced discussion evidently expose what a 2019 Navi 14
+does not.
+
+Vulkan through MoltenVK is therefore not a compromise on this hardware. It is
+the only GPU path that works at all.
 
 ### 3.4 Speculative decoding with a draft model (halves throughput)
 
@@ -303,6 +322,25 @@ measurement ended. On a seven-year-old chassis dissipating a busy discrete GPU,
 sustained performance is set by cooling, not by any software property measured
 in this report. Peak throughput is a benchmark number; the steady state is the
 product.
+
+## 7.5 Related work, and why it does not apply here
+
+Two existing results looked directly relevant and neither transferred. Both are
+recorded because ruling them out cheaply is worth more than the time it saves.
+
+**Ollama issue #15601** reports a ~56% token-rate gap between Ollama and
+standalone llama.cpp on Vulkan/AMD, attributed to two unmerged upstream
+changes: PR #19625 (Wave32 flash attention) and PR #20551 (graphics queue).
+Neither affects this configuration. Wave32 flash attention is irrelevant
+because flash attention is forced off under MoltenVK (section 3.1). The
+graphics queue change is unreachable: MoltenVK exposes a single queue family
+with `GRAPHICS | COMPUTE | TRANSFER` and `queueCount == 1`, so
+`device->single_queue` is always true and the code guarded by
+`allow_graphics_queue` never executes. That issue concerns Linux RADV on APUs.
+
+**llama.cpp discussion #19187** reports Metal outperforming Vulkan on Intel
+Macs with AMD GPUs. It does not reproduce on Navi 14; see section 3.3. The
+difference appears to be hardware generation rather than configuration.
 
 ## 8. Limitations
 

@@ -132,8 +132,11 @@ cmake --build build --parallel 8
 go build .
 
 ./vulkan-macos/package.sh build dist/ollama-vulkan-macos
-./vulkan-macos/smoke-test.sh dist/ollama-vulkan-macos
+REQUIRE_VULKAN_DEVICE=1 ./vulkan-macos/smoke-test.sh dist/ollama-vulkan-macos
 ```
+
+`REQUIRE_VULKAN_DEVICE=1` makes the smoke test fail if it cannot actually
+enumerate your GPU, rather than just checking that the payload is well formed.
 
 ## Credit and licence
 

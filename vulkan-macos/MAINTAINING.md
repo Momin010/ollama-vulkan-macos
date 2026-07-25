@@ -119,7 +119,7 @@ cmake --build build --parallel 8
 go build .
 
 ./vulkan-macos/package.sh build dist/ollama-vulkan-macos
-./vulkan-macos/smoke-test.sh dist/ollama-vulkan-macos
+REQUIRE_VULKAN_DEVICE=1 ./vulkan-macos/smoke-test.sh dist/ollama-vulkan-macos
 
 tar -czf ollama-vulkan-macos-<tag>-x86_64.tar.gz -C dist ollama-vulkan-macos
 shasum -a 256 ollama-vulkan-macos-<tag>-x86_64.tar.gz > checksums.txt

@@ -146,23 +146,29 @@ the patches, the packaging and the installer — is by
 
 Everything underneath it is the work of the
 [Ollama project](https://github.com/ollama/ollama) and
-[llama.cpp / ggml](https://github.com/ggml-org/llama.cpp), and that is the
-larger part by far.
+[llama.cpp / ggml](https://github.com/ggml-org/llama.cpp), used here under the
+MIT License. That is the larger part by far.
 
-MIT licensed, same as upstream. **You may use, modify, sell and redistribute
-this, including inside a commercial or closed-source product.** The one
-condition is attribution: if you distribute this software or a substantial
-part of it, in source or binary form, you must carry the copyright notices
-from [`LICENSE`](../LICENSE) and [`NOTICE`](../NOTICE) — crediting both the
-Ollama project and Momin Aldahdouh.
+**This build is source-available, not open source.**
 
-Running it yourself carries no obligation. The requirement is on
-redistribution: forks, rebranded builds, and products built on this work.
+| | |
+|---|---|
+| Run it on your own machines | ✅ including at work |
+| Modify it for your own use | ✅ |
+| Read and learn from the source | ✅ |
+| Pass it on to anyone else | ❌ |
+| Bundle it into a product, or host it as a service | ❌ |
 
-If this is useful to you, a star or a link back is appreciated but not
-required.
+The full terms are in [`LICENSE`](../LICENSE). Ollama's MIT licence is in
+[`LICENSE.ollama`](../LICENSE.ollama) and still applies to their code — you can
+always get Ollama, llama.cpp and ggml from their own authors under MIT, and
+nothing here changes that.
+
+Want to redistribute, bundle or resell this? [Open an
+issue](https://github.com/Momin010/ollama-vulkan-macos/issues). The answer is
+often yes.
 
 This is an unofficial community build, not affiliated with or endorsed by the
-Ollama project. "Ollama" is their trademark; the licence covers the code, not
-the name. Please do not report issues with this build to them — open them
+Ollama project. "Ollama" is their trademark; no licence is granted to the name.
+Please do not report issues with this build to them — open them
 [here](https://github.com/Momin010/ollama-vulkan-macos/issues) instead.

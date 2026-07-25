@@ -45,7 +45,7 @@ ok "all expected files present"
 # MIT licence this project depends on, so it fails the build rather than
 # merely warning.
 log "checking licence notices are bundled"
-for legal in LICENSE NOTICE; do
+for legal in LICENSE LICENSE.ollama NOTICE; do
     [ -s "$STAGE_DIR/$legal" ] || die "$legal missing from the payload"
 done
 grep -q "Ollama" "$STAGE_DIR/LICENSE" || die "LICENSE does not credit Ollama"

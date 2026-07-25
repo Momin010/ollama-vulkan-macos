@@ -1,8 +1,27 @@
 ollama-vulkan-macos
 Vulkan/MoltenVK GPU acceleration for Ollama on Intel Macs with AMD GPUs
 
-Copyright (c) 2026 Momin Aldahdouh
+Copyright (c) 2026 Momin Aldahdouh. All rights reserved.
 https://github.com/Momin010/ollama-vulkan-macos
+
+--------------------------------------------------------------------------
+Licence summary
+--------------------------------------------------------------------------
+
+This software is SOURCE-AVAILABLE, NOT OPEN SOURCE.
+
+  You may     run it on your own machines, modify it for your own use,
+              and read the source.
+
+  You may not pass it on to anyone else -- no distributing, publishing,
+              bundling, reselling or hosting it as a service, whether
+              modified or not.
+
+The full terms are in LICENSE. For permission to redistribute, ask.
+
+--------------------------------------------------------------------------
+Third-party software
+--------------------------------------------------------------------------
 
 This product includes software developed by the Ollama project.
 Copyright (c) Ollama
@@ -12,32 +31,19 @@ Ollama in turn bundles llama.cpp and ggml.
 Copyright (c) 2023-present The ggml authors
 https://github.com/ggml-org/llama.cpp
 
---------------------------------------------------------------------------
-Attribution
---------------------------------------------------------------------------
+Both are MIT licensed. Their licence text is in LICENSE.ollama and must
+accompany any copy of this software.
 
-All of the above is MIT licensed. You may use, modify, sell and redistribute
-it, including as part of a commercial or closed-source product.
-
-The MIT License requires one thing in return: if you distribute this software
-or a substantial portion of it, in source or binary form, you must include the
-copyright notices above and the MIT licence text.
-
-In practice that means a fork, a rebranded build, or a commercial product
-built on this work must credit both:
-
-  - the Ollama project, for Ollama and the llama.cpp/ggml runtime it bundles
-  - Momin Aldahdouh, for the Vulkan/MoltenVK support that makes it run on
-    AMD GPUs under macOS
-
-Simply running the software imposes no obligation. The requirement applies to
-redistribution.
+Those projects remain freely available under the MIT License from their own
+authors. The restrictions in LICENSE apply to this software as assembled
+here; they do not and cannot restrict anyone's rights to Ollama, llama.cpp
+or ggml obtained from their original sources.
 
 --------------------------------------------------------------------------
-What is original to this fork
+What is original to this work
 --------------------------------------------------------------------------
 
-Authored for this project:
+Authored by Momin Aldahdouh:
 
   discover/vulkan_darwin.go
   discover/vulkan_darwin_test.go
@@ -49,7 +55,7 @@ Authored for this project:
   .github/workflows/vulkan-macos-sync.yaml
   .github/README.md
 
-Modifications to existing Ollama files:
+Modifications to existing Ollama files, also by Momin Aldahdouh:
 
   discover/llama_server.go   Vulkan device ordinals keyed to the backend
                              rather than to the position in the device list
@@ -57,13 +63,13 @@ Modifications to existing Ollama files:
                              as integrated on macOS
   llm/llama_server.go        flash attention forced off for Vulkan on macOS
 
-Everything else is the work of the Ollama project and its contributors.
+Everything else is the work of the Ollama project and its contributors, and
+is used here under the MIT License.
 
 --------------------------------------------------------------------------
 Trademarks
 --------------------------------------------------------------------------
 
 "Ollama" is a trademark of its owners. This is an unofficial community build,
-not affiliated with or endorsed by the Ollama project. The MIT licence grants
-rights to the code only; it grants no rights to any name, logo or branding.
-Anyone redistributing a modified version should give it a distinct name.
+not affiliated with or endorsed by the Ollama project. No licence is granted
+to any name, logo or branding.

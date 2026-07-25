@@ -1,22 +1,94 @@
-MIT License
+ollama-vulkan-macos License
+Copyright (c) 2026 Momin Aldahdouh. All rights reserved.
 
-Copyright (c) Ollama
-Copyright (c) 2026 Momin Aldahdouh
+This software is SOURCE-AVAILABLE, NOT OPEN SOURCE. You may read it, run it
+and modify it for yourself. You may not give it to anyone else.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. DEFINITIONS
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+   "The Software" means this work as a whole: the Vulkan/MoltenVK support,
+   packaging, installer and automation authored by the copyright holder,
+   together with the third-party components described in section 4.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+   "You" means the individual or organisation exercising the permissions
+   granted below.
+
+2. WHAT YOU MAY DO
+
+   (a) Use the Software on any computer you own or control, for any purpose,
+       including at work and for commercial activity of your own.
+
+   (b) Modify the Software, and run your modified version, on those same
+       computers.
+
+   (c) Read, study and learn from the source code.
+
+   (d) Make backup copies for your own use.
+
+3. WHAT YOU MAY NOT DO
+
+   (a) Distribute, publish, share, upload, sell, rent, lend, sublicense or
+       otherwise make the Software available to any third party, in source
+       or binary form, whole or in part, modified or unmodified.
+
+   (b) Offer the Software to third parties as a hosted, managed or network
+       service.
+
+   (c) Incorporate the Software, or any part of it, into a product or service
+       that you distribute.
+
+   (d) Remove, obscure or alter this licence, the NOTICE file, the copyright
+       notices, or the third-party licence texts.
+
+   Permission for any of the above may be granted in writing by the copyright
+   holder. Ask.
+
+4. THIRD-PARTY COMPONENTS
+
+   The Software incorporates the Ollama project, and through it llama.cpp and
+   ggml, which are MIT licensed:
+
+       Copyright (c) Ollama
+       Copyright (c) 2023-present The ggml authors
+
+   Their full licence text is in LICENSE.ollama and must accompany any copy
+   of the Software that this licence permits.
+
+   Those components remain independently available under the MIT License from
+   their original authors. Nothing in this licence restricts, or purports to
+   restrict, your rights to obtain and use Ollama, llama.cpp or ggml from
+   those sources under their own terms. The restrictions in section 3 apply
+   to this Software as assembled and distributed by the copyright holder, and
+   to the original work contained in it.
+
+5. RESERVATION OF RIGHTS
+
+   All rights not expressly granted above are reserved by the copyright
+   holder.
+
+6. TRADEMARKS
+
+   This licence grants no rights in any name, logo or branding. "Ollama" is
+   a trademark of its owners. This is an unofficial build, not affiliated
+   with or endorsed by the Ollama project.
+
+7. TERMINATION
+
+   If you breach section 3, the permissions in section 2 terminate
+   automatically. They are reinstated if you cure the breach promptly and it
+   was your first.
+
+8. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+   THE AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+   DEALINGS IN THE SOFTWARE.
+
+--------------------------------------------------------------------------
+
+Want to redistribute, bundle or resell this? Open an issue or get in touch.
+The answer is often yes.

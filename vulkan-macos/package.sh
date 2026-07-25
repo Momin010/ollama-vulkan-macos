@@ -81,7 +81,7 @@ chmod +x "$STAGE_DIR/ollama"
 # The MIT licence requires the copyright notices to travel with binary
 # distributions, not just with source. This archive is how almost everyone
 # receives the software, so the notices ship inside it.
-for legal in LICENSE NOTICE; do
+for legal in LICENSE LICENSE.ollama NOTICE; do
     [ -f "$legal" ] || die "$legal is missing from the repository root"
     cp "$legal" "$STAGE_DIR/$legal"
 done

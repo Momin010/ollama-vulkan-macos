@@ -276,10 +276,12 @@ repair() {
 install_watchdog() {
     mkdir -p "$SUPPORT_DIR" "$(dirname "$WATCHDOG_PLIST")" "$(dirname "$WATCHDOG_LOG")"
 
-    # The agent needs a local copy of this script; when run via curl | bash
-    # there is no file on disk to copy from.
-    if [ -f "${BASH_SOURCE[0]}" ] && [ "${BASH_SOURCE[0]}" != "bash" ]; then
-        cp "${BASH_SOURCE[0]}" "$SUPPORT_DIR/install.sh"
+    # The agent needs a local copy of this script. On the primary install path
+    # (curl | bash) the script is read from stdin and there is no file on disk
+    # to copy, so fall back to downloading it.
+    local self="${BASH_SOURCE[0]:-}"
+    if [ -n "$self" ] && [ "$self" != "bash" ] && [ -f "$self" ]; then
+        cp "$self" "$SUPPORT_DIR/install.sh"
     else
         curl -fsSL "$SCRIPT_URL" -o "$SUPPORT_DIR/install.sh" \
             || { warn "could not download the repair script; skipping watchdog"; return 1; }

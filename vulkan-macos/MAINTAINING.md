@@ -27,7 +27,7 @@ one large opaque diff.
 **The packaging never touches upstream paths.** Everything this fork adds is
 under `vulkan-macos/`, `.github/README.md`, or `.github/workflows/vulkan-*`.
 Upstream has no files at any of those paths, so packaging can never be what
-conflicts. In particular the README lives at `.github/README.md` — GitHub
+conflicts. In particular the README lives at `.github/README.md` - GitHub
 renders that in preference to the root `README.md`, so the front page is ours
 without modifying a file upstream edits constantly.
 
@@ -86,7 +86,7 @@ build locally and upload to the release page by hand. Nothing else in the
 pipeline depends on the runner architecture.
 
 **Ollama's auto-update overwrites the patched binary** on users' machines with
-no error — inference silently returns to the CPU. The installer's watchdog
+no error - inference silently returns to the CPU. The installer's watchdog
 handles this, but anyone who installed with `--no-watchdog` will just
 experience it as "it got slow again".
 
@@ -127,4 +127,4 @@ shasum -a 256 ollama-vulkan-macos-<tag>-x86_64.tar.gz > checksums.txt
 
 Attach both files to a GitHub release. The installer looks for an asset matching
 `ollama-vulkan-macos-*.tar.gz` and, if present, verifies it against
-`checksums.txt` — so upload the checksum file too, or installs will warn.
+`checksums.txt` - so upload the checksum file too, or installs will warn.

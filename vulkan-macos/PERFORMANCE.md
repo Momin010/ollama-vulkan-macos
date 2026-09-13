@@ -37,7 +37,7 @@ requires reading every weight once, so the throughput ceiling is
     tokens/s ≤ achievable_bandwidth / model_size_in_bytes
 
 For Llama 3.2 3B Q4_K_M (2.02 GB) on a GPU rated at 192 GB/s, that suggests
-95 tok/s. We measured 45.7 — 48% — and set out to find the missing half.
+95 tok/s. We measured 45.7 - 48% - and set out to find the missing half.
 
 **Hardware.** 2019 16" MacBook Pro; AMD Radeon Pro 5500M, 8 GB GDDR6, 128-bit
 bus at 12 Gbps = 192 GB/s rated; Intel UHD 630 integrated; macOS with
@@ -56,8 +56,8 @@ the real command line is `llama-server --model … --port N`. Servers survived,
 subsequent configurations failed to bind the port and exited, and the health
 check answered from the *first* server. Seven "different configurations"
 agreed within 4% because they were one configuration measured seven times.
-The bug is trivial; the failure mode — plausible, self-consistent, entirely
-fictitious data — is not. **Verify that the process answering you is the
+The bug is trivial; the failure mode - plausible, self-consistent, entirely
+fictitious data - is not. **Verify that the process answering you is the
 process you started.**
 
 ## 3. Negative results
@@ -74,7 +74,7 @@ runs bracketed the entire range. No knob affects generation throughput.
 `get_device_architecture()` identifies AMD GPUs via `VK_AMD_shader_core_properties`.
 MoltenVK does not expose it, so **every AMD GPU on macOS is classified as
 `OTHER`** and loses its architecture-specific pipeline tuning. For RDNA1 that
-table specifies `{"mul_mat_vec", 64}` — the generation kernel at subgroup
+table specifies `{"mul_mat_vec", 64}` - the generation kernel at subgroup
 size 64 rather than the RDNA default of 32.
 
 We restored the classification using the subgroup-size signature the device
@@ -124,8 +124,8 @@ arithmetic reason: the smallest same-tokenizer draft for Llama 3.2 is the 1B at
 break-even requires, and measured throughput fell to 20.25 tok/s.
 
 `ngram-simple` and `ngram-mod` also lost (20–42 tok/s). Batched verification is
-expensive on this GPU — prefill runs at only 35–52 tok/s, an order of magnitude
-below expectation — so schemes that trade batch work for weight traffic are
+expensive on this GPU - prefill runs at only 35–52 tok/s, an order of magnitude
+below expectation - so schemes that trade batch work for weight traffic are
 poorly matched to it.
 
 *(We initially recorded a null rather than a loss here, because `--spec-type`
@@ -136,7 +136,7 @@ Speculative decoding never ran. Corrected.)*
 
 Every efficiency figure above is computed against 192 GB/s. That number is a
 bus rate, not a capability. We measured the GPU directly with a Metal kernel
-that streams a 1 GiB private buffer and accumulates — pure coalesced sequential
+that streams a 1 GiB private buffer and accumulates - pure coalesced sequential
 read, no dequantisation, a strict upper bound on any inference kernel:
 
     simple grid-stride kernel:  141.4 GB/s   (74% of rated)
@@ -155,7 +155,7 @@ Recomputed against what the hardware can actually deliver:
 | 1B Q8_0 | 1.06 | 77.69 | 102.6 | 53% | **63%** |
 | 3B Q8_0 | 1.06 | 33.06 | 113.1 | 59% | **69%** |
 | 1B f16 | 2.00 | 47.55 | 117.9 | 61% | **72%** |
-| *streaming read* | — | — | *163.8* | *85%* | *100%* |
+| *streaming read* | - | - | *163.8* | *85%* | *100%* |
 
 Inference runs at 56–72% of what the memory system can deliver, not the 48–61%
 the rated figure implies. An earlier revision of this report used 141.4 GB/s as
@@ -165,8 +165,8 @@ it moves every figure down, and nothing here reaches 80%.
 
 ## 5. Where the remaining gap is
 
-The efficiency ordering is monotonic in bytes per weight. f16 — raw read, no
-unpacking — reaches 83%; Q4_K_M reaches 65%. The obvious reading is that the
+The efficiency ordering is monotonic in bytes per weight. f16 - raw read, no
+unpacking - reaches 83%; Q4_K_M reaches 65%. The obvious reading is that the
 gap is dequantisation ALU cost, and an earlier draft of this report claimed
 exactly that, along with a 28% prize for removing it.
 
@@ -174,8 +174,8 @@ exactly that, along with a 28% prize for removing it.
 
 If unpacking cost were the limiter, 4-bit formats with very different unpacking
 schemes should differ in throughput. We quantised one Llama 3.2 1B f16 file
-into four 4-bit formats — identical weights, identical shapes, only the packing
-scheme varies — and measured each on a fresh verified server:
+into four 4-bit formats - identical weights, identical shapes, only the packing
+scheme varies - and measured each on a fresh verified server:
 
 | format | unpacking work | GB/s | % of 141.4 | G weights/s | tok/s |
 |---|---|---|---|---|---|
@@ -189,7 +189,7 @@ scheme varies — and measured each on a fresh verified server:
 Q4_0 does perhaps a third of Q4_K_M's unpacking work and is the *smaller*
 file. It is one point **slower** in bandwidth efficiency. All four 4-bit
 formats land within 55–61% despite radically different packing. Unpacking cost
-is visible only at the extreme — IQ4_NL's lookup table costs about six points —
+is visible only at the extreme - IQ4_NL's lookup table costs about six points -
 and it is nowhere near the 22 points that separate 4-bit from f16.
 
 **What the data actually shows** is two different limits:
@@ -202,14 +202,14 @@ crossover sits near 8 bits. Critically, 4-bit saturates **neither** limit:
 60% of achievable bandwidth and roughly 304 GFLOP/s, about 8% of this GPU's
 fp32 peak. Neither the memory system nor the arithmetic units are busy.
 
-That signature — both resources idle, throughput capped anyway — points to
+That signature - both resources idle, throughput capped anyway - points to
 latency or occupancy in the matrix-vector reduction rather than to any
 arithmetic the kernel performs. Each weight is read exactly once and never
 reused, so there is no cache reuse to exploit and the kernel must keep enough
 loads in flight to cover memory latency. Failing to do so caps throughput
 without saturating anything.
 
-**Revised research target.** Not a cheaper quantisation format — that is now
+**Revised research target.** Not a cheaper quantisation format - that is now
 measured and does not help. The opportunity, if there is one, is a
 matrix-vector kernel with better latency hiding at low bit-widths on RDNA1
 through MoltenVK. That is kernel engineering rather than format design, it is
@@ -305,8 +305,8 @@ drift-controlled runs:
 | prose, no repetition | 45.12 | 45.18 | unchanged |
 | output echoing input | 40.57 | **48.38** | **+19%** |
 
-The gain appears wherever output repeats input — editing code, refactoring,
-summarising a file — which is most of what a local model is used for. It is
+The gain appears wherever output repeats input - editing code, refactoring,
+summarising a file - which is most of what a local model is used for. It is
 enabled by default in this fork for Vulkan devices on darwin.
 
 ## 7. Thermal behaviour dominates in practice
@@ -350,7 +350,7 @@ would lower every "% of achievable" figure proportionally. Thermal state is
 controlled by cooldowns and bracketing rather than by measuring die
 temperature, which requires elevated privileges. The dequantisation-cost
 conclusion is inferred from a monotonic trend across four formats, not from
-isolating ALU cost directly — a kernel-level ablation would be stronger
+isolating ALU cost directly - a kernel-level ablation would be stronger
 evidence.
 
 ## 9. Summary
